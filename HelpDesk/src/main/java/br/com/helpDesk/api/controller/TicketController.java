@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Random;
 
 import javax.servlet.http.HttpServletRequest;
+import javax.websocket.server.PathParam;
 
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
@@ -24,6 +25,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import br.com.helpDesk.api.dto.Summary;
 import br.com.helpDesk.api.response.Response;
 import br.com.helpDesk.api.security.jwt.JwtTokenUtil;
 import br.com.helpDesk.api.service.TicketService;
@@ -211,6 +213,76 @@ public class TicketController {
 		}
 		
 		response.setData(tickets);
+		return ResponseEntity.ok(response);
+	}
+	
+	@PutMapping(value = "{id}/{status}")
+	@PreAuthorize("hasAnyRole('CUSTOMER', 'TECHNICIAN')")
+	public ResponseEntity<Response<Ticket>> changeStatus(
+			@PathParam("id") String id,
+			@PathParam("status") String status,
+			HttpServletRequest request,
+			@RequestBody Ticket ticket,
+			BindingResult result){
+		Response<Ticket> response = new Response<Ticket>();
+		try {
+			validateChangeStatus(id, status, result);
+			if(result.hasErrors()) {
+				result.getAllErrors().forEach(error -> response.getErrors().add(error.getDefaultMessage()));
+				return ResponseEntity.badRequest().body(response);
+			}
+			Ticket ticketCurrent = ticketService.findById(id).get();
+			ticketCurrent.setStatus(StatusEnum.getStatus(status));
+			if(status.equals("Assigned")) {
+				ticketCurrent.setAssigned(userFromRequest(request));
+			}
+			Ticket ticketPersist = (Ticket) ticketService.createOrUpdate(ticketCurrent);
+			ChangeStatus changeStatus = new ChangeStatus();
+			changeStatus.setUserChange(userFromRequest(request));
+			changeStatus.setDateChangeStatus(Calendar.getInstance().getTime());
+			changeStatus.setStatus(StatusEnum.getStatus(status));
+			changeStatus.setTicket(ticketPersist);
+			ticketService.createChangeStatus(changeStatus);
+			response.setData(ticketPersist);
+		}catch(Exception e) {
+			response.getErrors().add(e.getMessage());
+			return ResponseEntity.badRequest().body(response);
+		}
+		return ResponseEntity.ok(response);
+	}
+	
+	private void validateChangeStatus(String id, String status, BindingResult result) {
+		if(id == null || id.equals("")) {
+			result.addError(new ObjectError("id", "Id não informado"));
+		}
+		if(status == null || status.equals("")) {
+			result.addError(new ObjectError("status", "status não informado"));
+		}
+	}
+	
+	@PutMapping(value = "/summary")
+	public ResponseEntity<Response<Summary>> findSummary(){
+		Response<Summary> response = new Response<Summary>();
+		Summary summary = new Summary();
+		
+		Iterable<Ticket> tickets = ticketService.findAll();
+		for(Iterator<Ticket> iterator = tickets.iterator(); iterator.hasNext();) {
+			Ticket ticket = (Ticket) iterator.next();
+			if(ticket.getStatus().equals(StatusEnum.New)) {
+				summary.sumAmountNew();
+			}else if(ticket.getStatus().equals(StatusEnum.Resolved)) {
+				summary.sumAmountResolved();
+			}else if(ticket.getStatus().equals(StatusEnum.Approved)) {
+				summary.sumAmountApproved();
+			}else if(ticket.getStatus().equals(StatusEnum.Disapproved)) {
+				summary.sumAmountDisapproved();
+			}else if(ticket.getStatus().equals(StatusEnum.Assigned)) {
+				summary.sumAmountAssigned();
+			}else if(ticket.getStatus().equals(StatusEnum.Closed)) {
+				summary.sumAmountClosed();
+			}
+		}
+		response.setData(summary);
 		return ResponseEntity.ok(response);
 	}
 }
